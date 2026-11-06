@@ -1,0 +1,73 @@
+name: build, test & deploy
+
+on:
+    push:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Code ausschecken
+              uses: actions/checkout@v4
+
+            - name: Java 21 einrichten
+              uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: 21
+                  cache: maven
+
+            - name: Maven Build & Tests
+              run: mvn -B verify
+
+    docker:
+        runs-on: ubuntu-latest
+        needs: test
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - name: Code ausschecken
+              uses: actions/checkout@v4
+
+            - name: Docker-Image bauen
+              run: docker build -t refcard01 .
+
+            - name: Docker-Image testen
+              run: |
+                  docker run -d --name refcard01 -p 8080:8080 refcard01
+                  for i in $(seq 1 30); do
+                  if curl -sf http://localhost:8080 > /dev/null; then
+                      echo "App antwortet"
+                      exit 0
+                  fi
+                  sleep 2
+                  done
+                  echo "App antwortet nicht"
+                  docker logs refcard01
+                  exit 1
+            
+            - name: Bei Docker Hub anmelden
+              uses: docker/login-action@v3
+              with:
+                  username: ${{ secrets.DOCKERHUB_USERNAME }}
+                  password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+            - name: Image auf Docker Hub pushen
+              run: |
+                docker tag refcard01 ${{ secrets.DOCKERHUB_USERNAME }}/refcard01:latest
+                docker push ${{ secrets.DOCKERHUB_USERNAME }}/refcard01:latest
+
+            - name: Bei GitHub Container Registry anmelden
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Image auf ghcr pushen
+              run: |
+                IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/refcard01:latest
+                docker tag refcard01 $IMAGE
+                docker push $IMAGE

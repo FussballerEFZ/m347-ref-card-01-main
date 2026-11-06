@@ -20,5 +20,7 @@ USER spring
 
 COPY --from=build /app/target/*.jar app.jar
 
+LABEL org.opencontainers.image.source="https://github.com/FussballerEFZ/m347-ref-card-01-main"
+
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
