@@ -1,0 +1,60 @@
+name: deploy to AWS ECR
+
+# Läuft erst, wenn im Repo die Variable AWS_ENABLED=true gesetzt ist
+# (Settings -> Secrets and variables -> Actions -> Variables).
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+env:
+    AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+    AWS_REGION: ${{ secrets.AWS_REGION }}
+    ECR_REPOSITORY: refcard01
+
+jobs:
+    ecr:
+        if: vars.AWS_ENABLED == 'true'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Code ausschecken
+              uses: actions/checkout@v4
+
+            - name: Java 21 einrichten
+              uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: 21
+                  cache: maven
+
+            - name: Maven Build & Tests
+              run: mvn -B verify
+
+            - name: Docker-Image bauen
+              run: docker build -t refcard01 .
+
+            - name: Docker-Image testen
+              run: |
+                  docker run -d --name refcard01 -p 8080:8080 refcard01
+                  for i in $(seq 1 30); do
+                    if curl -sf http://localhost:8080 > /dev/null; then echo "App antwortet"; exit 0; fi
+                    sleep 2
+                  done
+                  docker logs refcard01
+                  exit 1
+
+            # ECR_TOKEN = Ausgabe von: aws ecr get-login-password --region us-east-1
+            # Achtung: läuft nach ca. 12 h ab und muss neu gesetzt werden.
+            - name: Bei Amazon ECR anmelden (ECR_TOKEN)
+              env:
+                  ECR_TOKEN: ${{ secrets.ECR_TOKEN }}
+              run: |
+                  echo "$ECR_TOKEN" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+            - name: Image auf ECR pushen (latest + Commit-SHA)
+              run: |
+                  REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                  docker tag refcard01 $REGISTRY/$ECR_REPOSITORY:latest
+                  docker tag refcard01 $REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA::7}
+                  docker push $REGISTRY/$ECR_REPOSITORY:latest
+                  docker push $REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA::7}
